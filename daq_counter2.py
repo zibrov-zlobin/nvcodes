@@ -17,7 +17,7 @@ import nidaqmx
 
 from typing import Any, Sequence, Union, Dict, Optional
 from qcodes.instrument import Instrument
-from qcodes.instrument.channel import InstrumentChannel
+from qcodes.instrument.channel import InstrumentChannel, ChannelList
 from qcodes.instrument.parameter import Parameter, ArrayParameter, ParameterWithSetpoints
 from qcodes.validators import Arrays, Numbers
 
@@ -155,10 +155,6 @@ class DAQCounter(Instrument): # replace with instrument channel later
     def close(self) -> None:
         self.clear_task()
 
-
-
-
-
 class DAQCOChannel(Instrument): #for some reason doesnt work with InstrumentChannel. __super__(name) is where it hiccups
     def __init__(self,
                  name: str,
@@ -224,4 +220,61 @@ class DAQCOChannel(Instrument): #for some reason doesnt work with InstrumentChan
     def close(self) -> None:
         self.clear_task()
 
+class DAQAnalogOutputVoltage(Parameter):
+    """Writes data to one or several DAQ analog outputs. This only writes one channel at a time,
+    since Qcodes ArrayParameters are not settable.
+    Args:
+        name: Name of parameter (usually 'voltage').
+        dev_name: DAQ device name (e.g. 'Dev1').
+        idx: AO channel index.
+        kwargs: Keyword arguments to be passed to ArrayParameter constructor.
+    """
+    def __init__(self, name: str, dev_name: str, idx: int, **kwargs) -> None:
+        super().__init__(name, **kwargs)
+        self.dev_name = dev_name
+        self.idx = idx
+        self._voltage = np.nan
+        self.label='Voltage'
+        self.unit = 'V'
+        self.name = 'voltage'
+    
+    def set_raw(self, voltage: Union[int, float]) -> None:
+        with nidaqmx.Task('daq_ao_task') as ao_task:
+            channel = f'{self.dev_name}/ao{self.idx}'
+            ao_task.ao_channels.add_ao_voltage_chan(channel, self.name)
+            ao_task.write(voltage, auto_start=True)
+        self._voltage = voltage
+    
+    def get_raw(self): # I think this can be readout. 
+        """Returns last voltage array written to outputs
+        """
+        return self._voltage
 
+class DAQAOChannel(InstrumentChannel):
+    """Instrument to write DAQ analog output data in a qcodes Loop or measurement.
+    Args:
+        name: Name of instrument (usually 'daq_ao').
+        dev_name: NI DAQ device name (e.g. 'Dev1').
+        channels: Dict of analog output channel configuration.
+        **kwargs: Keyword arguments to be passed to Instrument constructor.
+    """
+    def __init__(self, parent: 'NIDAQ', name: str, channum):
+        super().__init__(parent, name)
+
+        self.voltage = DAQAnalogOutputVoltage()
+
+        for ch, idx in channels.items():
+            self.add_parameter(
+                name=f'voltage_{ch.lower()}',
+                dev_name=dev_name,
+                idx=idx,
+                parameter_class=DAQAnalogOutputVoltage,
+                label='Voltage',
+                unit='V'
+            )
+
+class DAQAIChannel(InstrumentChannel):
+    pass
+
+class NIDAQ(Instrument):
+    pass
