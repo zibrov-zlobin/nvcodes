@@ -229,15 +229,14 @@ class DAQAnalogOutputVoltage(Parameter):
         idx: AO channel index.
         kwargs: Keyword arguments to be passed to ArrayParameter constructor.
     """
-    def __init__(self, chan_name: str) -> None:
-        super().__init__(name='voltage', label='Voltage', unit='V')
+    def __init__(self, name:str, chan_name: str) -> None:
+        super().__init__(name=name, label='Voltage', unit='V')
         self._voltage = np.nan
         self.channel = chan_name
     
     def set_raw(self, voltage: Union[int, float]) -> None:
         with nidaqmx.Task('daq_ao_task') as ao_task:
-            channel = f'{self.dev_name}/ao{self.idx}'
-            ao_task.ao_channels.add_ao_voltage_chan(self.chan_name) # maybe add a unique name (channel, unique_name)
+            ao_task.ao_channels.add_ao_voltage_chan(self.channel) # maybe add a unique name (channel, unique_name)
             ao_task.write(voltage, auto_start=True)
         self._voltage = voltage
     
@@ -256,46 +255,75 @@ class DAQAOChannel(InstrumentChannel):
     """
     def __init__(self, parent: 'NIDAQ', name: str, channum: int):
         super().__init__(parent, name)
-        self.parent = parent
-        self.chan_name = f'{self.parent.dev_name}/ao{channum}'
+        self._parent = parent
+        self.chan_name = f'{self._parent.dev_name}/ao{channum}'
         self.voltage = DAQAnalogOutputVoltage('voltage', self.chan_name)
 
 class DAQAIChannel(InstrumentChannel):
     pass
 
-class NIDAQ(Instrument):
-    def __init__(self, name:str, **kwargs) -> None:
-        self._set_up_aochannels()
+
+class Sweep_Context:
+    """ need to setup sweep voltages, clock, counter, and analog output write
+    """
+    def __init__(self, sweep: np.ndarray):
+        self.sweep = sweep
+
+    def __enter__(self):
+        return self
     
-    def _set_up_clock(self) -> None:
+    def __exit__(self):
+        # clocked context should take care of stopping the clock
+        return False
+    
+    def start(self) -> None:
+        
+
+
+class NIDAQClocked_Context:
+    def __init__(self, daq: 'NIDAQ', clksettings: Dict[str, Any]):
+        self._parent = daq
+        self._parent._set_up_clock(clksettings)
+
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        self._parent.clear_clock(self)
+        return False
+    
+    def sweep1d() -> Sweep_Context:
         pass
+
+    def sweep2d() -> Sweep_Context:
+        pass
+    
+
+class NIDAQ(Instrument):
+    def __init__(self, name:str, dev_name:str, **kwargs) -> None:
+        super().__init__(name, **kwargs)
+        self.dev_name = dev_name
+        self._task_list = []
+        self._clktask = None
+        self._set_up_aochannels()
+
+    def _set_up_clock(self, clk_settings):
+        self._clktask = nidaqmx.Task('clock')
+        self._clktask.co_channels.add_co_pulse_chan_freq()
+        self._clktask.timing.cfg_implicit_timing()
 
     def _clear_clock(self) -> None:
-        pass
+        self._clktask.stop()
+        self._clktack.close()
+    
+    # def sweep(self, output:str, voltages: Sequence[float],)
 
     def _set_up_aochannels(self) -> None:
-        channels = ChannelList(self, 'AOChannels', DAQAOChannel, sanpshotable=False)
-        for i in range(0, 10):
-            name = f'ch{i:02}'
+        channels = ChannelList(self, 'AOChannels', DAQAOChannel, snapshotable=False)
+        for i in range(0, 8):
+            name = f'ao{i}'
             channel = DAQAOChannel(self, name, i)
             self.add_submodule(name, channel)
             channels.append(channel)
         channels.lock()
         self.add_submodule('aochannels', channels)
-
-
-class NIDAQClock_Context:
-    def __init__(self, parent: 'NIDAQ', value: int):
-        self._parent = parent
-        self._value = value
-    
-    def __enter__(self):
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self._parent.clear_clock(self)
-        return False
-    
-    @property
-    def value(self) -> int:
-        return self._value
