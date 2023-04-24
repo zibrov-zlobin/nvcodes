@@ -18,7 +18,7 @@ import nidaqmx
 from typing import Any, Sequence, Union, Dict, Optional
 from qcodes.instrument import Instrument
 from qcodes.instrument.channel import InstrumentChannel, ChannelList
-from qcodes.instrument.parameter import Parameter, ArrayParameter, ParameterWithSetpoints
+from qcodes.instrument.parameter import Parameter, ParameterWithSetpoints
 from qcodes.validators import Arrays, Numbers
 
 from random import randint
@@ -229,19 +229,15 @@ class DAQAnalogOutputVoltage(Parameter):
         idx: AO channel index.
         kwargs: Keyword arguments to be passed to ArrayParameter constructor.
     """
-    def __init__(self, name: str, dev_name: str, idx: int, **kwargs) -> None:
-        super().__init__(name, **kwargs)
-        self.dev_name = dev_name
-        self.idx = idx
+    def __init__(self, chan_name: str) -> None:
+        super().__init__(name='voltage', label='Voltage', unit='V')
         self._voltage = np.nan
-        self.label='Voltage'
-        self.unit = 'V'
-        self.name = 'voltage'
+        self.channel = chan_name
     
     def set_raw(self, voltage: Union[int, float]) -> None:
         with nidaqmx.Task('daq_ao_task') as ao_task:
             channel = f'{self.dev_name}/ao{self.idx}'
-            ao_task.ao_channels.add_ao_voltage_chan(channel, self.name)
+            ao_task.ao_channels.add_ao_voltage_chan(self.chan_name) # maybe add a unique name (channel, unique_name)
             ao_task.write(voltage, auto_start=True)
         self._voltage = voltage
     
@@ -258,23 +254,48 @@ class DAQAOChannel(InstrumentChannel):
         channels: Dict of analog output channel configuration.
         **kwargs: Keyword arguments to be passed to Instrument constructor.
     """
-    def __init__(self, parent: 'NIDAQ', name: str, channum):
+    def __init__(self, parent: 'NIDAQ', name: str, channum: int):
         super().__init__(parent, name)
-
-        self.voltage = DAQAnalogOutputVoltage()
-
-        for ch, idx in channels.items():
-            self.add_parameter(
-                name=f'voltage_{ch.lower()}',
-                dev_name=dev_name,
-                idx=idx,
-                parameter_class=DAQAnalogOutputVoltage,
-                label='Voltage',
-                unit='V'
-            )
+        self.parent = parent
+        self.chan_name = f'{self.parent.dev_name}/ao{channum}'
+        self.voltage = DAQAnalogOutputVoltage('voltage', self.chan_name)
 
 class DAQAIChannel(InstrumentChannel):
     pass
 
 class NIDAQ(Instrument):
-    pass
+    def __init__(self, name:str, **kwargs) -> None:
+        self._set_up_aochannels()
+    
+    def _set_up_clock(self) -> None:
+        pass
+
+    def _clear_clock(self) -> None:
+        pass
+
+    def _set_up_aochannels(self) -> None:
+        channels = ChannelList(self, 'AOChannels', DAQAOChannel, sanpshotable=False)
+        for i in range(0, 10):
+            name = f'ch{i:02}'
+            channel = DAQAOChannel(self, name, i)
+            self.add_submodule(name, channel)
+            channels.append(channel)
+        channels.lock()
+        self.add_submodule('aochannels', channels)
+
+
+class NIDAQClock_Context:
+    def __init__(self, parent: 'NIDAQ', value: int):
+        self._parent = parent
+        self._value = value
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._parent.clear_clock(self)
+        return False
+    
+    @property
+    def value(self) -> int:
+        return self._value
