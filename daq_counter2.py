@@ -263,33 +263,6 @@ class DAQAIChannel(InstrumentChannel):
     pass
 
 
-class NIDAQArrangement_Context:
-    def __init__(self, daq: 'NIDAQ', aochannels, cntrchannel):
-        self._parent = daq
-        self._aochannels = aochannels
-        self._counter = cntrchannel
-        self._tasklist = list()
-    
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, traceback):
-        return False
-    
-    def sweep(self, contact: str, start_voltage: float, stop_voltage:float, npts:int,
-              settle_time: float, time_per_point: float) -> Sweep_Context:
-        
-        sample_rate = int(1.0/settle_time)
-        clkadj = int(1 + time_per_point*sample_rate)
-        sweep = np.repeat(np.linspace(start_voltage, stop_voltage, npts), clkadj)
-        return Sweep_Context(self, sweep, sample_rate)
-    
-    def _clear_tasks(self):
-        for task in len(self._arrangement._tasklist):
-            task.stop()
-            task.close()    
-        self._arrangement._tasklist= list() #not sure if its better to pop() it element by element
-
 class Sweep_Context:
     """ need to setup sweep voltages, clock, counter, and analog output write
     """
@@ -335,6 +308,35 @@ class Sweep_Context:
         # data = self._read()
         # return data
         pass
+
+
+
+class NIDAQArrangement_Context:
+    def __init__(self, daq: 'NIDAQ', aochannels, cntrchannel):
+        self._parent = daq
+        self._aochannels = aochannels
+        self._counter = cntrchannel
+        self._tasklist = list()
+    
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, traceback):
+        return False
+    
+    def sweep(self, contact: str, start_voltage: float, stop_voltage:float, npts:int,
+              settle_time: float, time_per_point: float) -> Sweep_Context:
+        
+        sample_rate = int(1.0/settle_time)
+        clkadj = int(1 + time_per_point*sample_rate)
+        sweep = np.repeat(np.linspace(start_voltage, stop_voltage, npts), clkadj)
+        return Sweep_Context(self, sweep, sample_rate)
+    
+    def _clear_tasks(self):
+        for task in len(self._arrangement._tasklist):
+            task.stop()
+            task.close()    
+        self._arrangement._tasklist= list() #not sure if its better to pop() it element by element
 
 
 
