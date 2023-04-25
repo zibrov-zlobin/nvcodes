@@ -263,61 +263,111 @@ class DAQAIChannel(InstrumentChannel):
     pass
 
 
+class NIDAQArrangement_Context:
+    def __init__(self, daq: 'NIDAQ', aochannels, cntrchannel):
+        self._parent = daq
+        self._aochannels = aochannels
+        self._counter = cntrchannel
+        self._tasklist = list()
+    
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, traceback):
+        return False
+    
+    def sweep(self, contact: str, start_voltage: float, stop_voltage:float, npts:int,
+              settle_time: float, time_per_point: float) -> Sweep_Context:
+        
+        sample_rate = int(1.0/settle_time)
+        clkadj = int(1 + time_per_point*sample_rate)
+        sweep = np.repeat(np.linspace(start_voltage, stop_voltage, npts), clkadj)
+        return Sweep_Context(self, sweep, sample_rate)
+    
+    def _clear_tasks(self):
+        for task in len(self._arrangement._tasklist):
+            task.stop()
+            task.close()    
+        self._arrangement._tasklist= list() #not sure if its better to pop() it element by element
+
 class Sweep_Context:
     """ need to setup sweep voltages, clock, counter, and analog output write
     """
-    def __init__(self, sweep: np.ndarray):
-        self.sweep = sweep
+    def __init__(self, arrangement: 'NIDAQArrangement_Context', 
+                 sweep: np.ndarray, sample_rate: int):
+        self._arrangement = arrangement
+        self._daq = self._arrangement._parent
+        self._sweep = sweep
+        self._sample_rate = sample_rate
+        self._daq._set_up_clock(self._sample_rate, len(self._sweep))
+        self._set_up_sweep()
 
     def __enter__(self):
         return self
     
     def __exit__(self):
-        # clocked context should take care of stopping the clock
+        self._daq._clear_clock()
+        self._arrangement._clear_tasks()
         return False
     
+    def _set_up_sweep(self) -> None:
+        # create ao tasks here
+        aotask = nidaqmx.Task() 
+        for voltageChannel in self._arrangement._aochannels:
+            # Create Task, setup timing to the clock. add each analog output channel from list; lookup how to do the string of channels
+            aotask.ao_channels.add_ao_voltage_chan(voltageChannel)
+
+        aotask.timing.cfg_samp_clk_timing(rate = self._sample_rate,
+                                          source = "/Dev1/Ctr1InternalOutput", # write a function to handle clocks
+                                          active_edge = nidaqmx.constants.Edge.RISING,
+                                          sample_mode = nidaqmx.constant.AcquisitionType.FINITE,
+                                          samps_per_chan = self._sample_rate # maybe a +1
+                                        )
+
+        aotask.write(self._sweep, auto_start=False)
+        self._arrangement._task_list.append(aotask)
+
     def start(self) -> None:
-        
+        self._daq._clktask.start()
 
-
-class NIDAQClocked_Context:
-    def __init__(self, daq: 'NIDAQ', clksettings: Dict[str, Any]):
-        self._parent = daq
-        self._parent._set_up_clock(clksettings)
-
-    def __enter__(self):
-        return self
-    
-    def __exit__(self, exc_type, exc_value, traceback):
-        self._parent.clear_clock(self)
-        return False
-    
-    def sweep1d() -> Sweep_Context:
+    def read(self) -> np.ndarray:
+        # self._wait()
+        # data = self._read()
+        # return data
         pass
 
-    def sweep2d() -> Sweep_Context:
-        pass
-    
+
 
 class NIDAQ(Instrument):
     def __init__(self, name:str, dev_name:str, **kwargs) -> None:
         super().__init__(name, **kwargs)
-        self.dev_name = dev_name
+        self._dev_name = dev_name
         self._task_list = []
         self._clktask = None
         self._set_up_aochannels()
 
-    def _set_up_clock(self, clk_settings):
+        self._clksettings = {'counter': self._dev_name+"/ctr1",
+                             'name_to_assign_to_channel': 'clock',
+                             'units': nidaqmx.constants.FrequencyUnits.HZ,
+                             'idle_state': nidaqmx.constants.Level.LOW,
+                             'initial_delay': 0.0,
+                             'duty_cycle':0.5}
+    
+    def arrangement(self, contacts: Dict[str, int], counter:str) -> NIDAQArrangement_Context:
+        return NIDAQArrangement_Context(self, contacts, counter)
+
+    def _set_up_clock(self, sampling_rate, samples_per_channel):
+        clksettings = self._clksettings['freq'] = sampling_rate
         self._clktask = nidaqmx.Task('clock')
-        self._clktask.co_channels.add_co_pulse_chan_freq()
-        self._clktask.timing.cfg_implicit_timing()
+        self._clktask.co_channels.add_co_pulse_chan_freq(clksettings)
+        self._clktask.timing.cfg_implicit_timing(sample_mode= nidaqmx.constants.AcquisitionType.CONTINUOUS,
+                                             samps_per_chan= int(samples_per_channel))
 
     def _clear_clock(self) -> None:
         self._clktask.stop()
-        self._clktack.close()
+        self._clktask.close()
+        self._clktask = None
     
-    # def sweep(self, output:str, voltages: Sequence[float],)
-
     def _set_up_aochannels(self) -> None:
         channels = ChannelList(self, 'AOChannels', DAQAOChannel, snapshotable=False)
         for i in range(0, 8):
@@ -327,3 +377,9 @@ class NIDAQ(Instrument):
             channels.append(channel)
         channels.lock()
         self.add_submodule('aochannels', channels)
+    
+
+
+        
+
+        
