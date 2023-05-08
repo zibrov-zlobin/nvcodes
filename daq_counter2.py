@@ -256,18 +256,49 @@ class DAQAOChannel(InstrumentChannel):
     def __init__(self, parent: 'NIDAQ', name: str, channum: int):
         super().__init__(parent, name)
         self._parent = parent
-        self.chan_name = f'{self._parent.dev_name}/ao{channum}'
+        self.chan_name = f'{self._parent._dev_name}/ao{channum}'
         self.voltage = DAQAnalogOutputVoltage('voltage', self.chan_name)
 
 class DAQAIChannel(InstrumentChannel):
     pass
 
+class Clock_Context:
+    def __init__(self, daq:'NIDAQ', sampling_rate, samples_per_channel):
+        self._daq = daq
+        self._clksettings = {'counter': self._dev_name+"/ctr1",
+                             'name_to_assign_to_channel': 'clock',
+                             'units': nidaqmx.constants.FrequencyUnits.HZ,
+                             'idle_state': nidaqmx.constants.Level.LOW,
+                             'initial_delay': 0.0,
+                             'duty_cycle':0.5}
+        self._set_up_clock(sampling_rate, samples_per_channel)
+        
+    def __enter__(self, exc_type, exc_val, traceback):
+        return self
+    
+    def __exit__(self):
+        pass
+    
+    def _set_up_clock(self, sampling_rate, samples_per_channel):
+        clksettings = self._clksettings['freq'] = sampling_rate
+        self._clktask = nidaqmx.Task('clock')
+        print(clksettings)
+        self._clktask.co_channels.add_co_pulse_chan_freq(**clksettings)
+        self._clktask.timing.cfg_implicit_timing(sample_mode= nidaqmx.constants.AcquisitionType.CONTINUOUS,
+                                             samps_per_chan= int(samples_per_channel))
+    
+    def _teardown_clock(self):
+        self._clktask.stop()
+        self._clktask.close()
+        self._clktask = None
+        
 
 class Sweep_Context:
     """ need to setup sweep voltages, clock, counter, and analog output write
     """
     def __init__(self, arrangement: 'NIDAQArrangement_Context', 
                  sweep: np.ndarray, sample_rate: int):
+        print("sweep init")
         self._arrangement = arrangement
         self._daq = self._arrangement._parent
         self._sweep = sweep
@@ -276,9 +307,11 @@ class Sweep_Context:
         self._set_up_sweep()
 
     def __enter__(self):
+        print("sweep enter")
         return self
     
-    def __exit__(self):
+    def __exit__(self, exc_type, exc_val, traceback):
+        print("Sweep teardown")
         self._daq._clear_clock()
         self._arrangement._clear_tasks()
         return False
@@ -342,7 +375,7 @@ class NIDAQArrangement_Context:
 
 class NIDAQ(Instrument):
     def __init__(self, name:str, dev_name:str, **kwargs) -> None:
-        super().__init__(name, **kwargs)
+        super().__init__(name,**kwargs)
         self._dev_name = dev_name
         self._task_list = []
         self._clktask = None
@@ -361,7 +394,7 @@ class NIDAQ(Instrument):
     def _set_up_clock(self, sampling_rate, samples_per_channel):
         clksettings = self._clksettings['freq'] = sampling_rate
         self._clktask = nidaqmx.Task('clock')
-        self._clktask.co_channels.add_co_pulse_chan_freq(clksettings)
+        self._clktask.co_channels.add_co_pulse_chan_freq(**clksettings)
         self._clktask.timing.cfg_implicit_timing(sample_mode= nidaqmx.constants.AcquisitionType.CONTINUOUS,
                                              samps_per_chan= int(samples_per_channel))
 
